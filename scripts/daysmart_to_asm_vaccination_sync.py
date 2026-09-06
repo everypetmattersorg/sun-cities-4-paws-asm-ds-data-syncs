@@ -5,18 +5,27 @@ Pulls given vaccinations from DaySmart /reminders (item.type == "Vaccinations",
 givenDate populated) and writes them to the matching ASM shelter animal via
 csv_import.
 
-CRITICAL LESSON FROM THIS PROJECT'S HISTORY: writing a vaccination type
-string that doesn't exactly match a real ASM vaccinationtype.VaccinationType
-name causes ASM's csv_import to silently default to the wrong type (this
-already happened once and mislabeled ~100 records). To prevent a repeat,
-this script:
+CRITICAL LESSON FROM THIS PROJECT'S HISTORY -- ROOT CAUSE CONFIRMED: writing
+a vaccination type string that doesn't exactly match a real ASM
+vaccinationtype.VaccinationType name doesn't leave the field unset -- ASM3's
+real csv_import source (src/asm3/csvimport.py on GitHub) shows an unmatched
+VACCINATIONTYPE falls back to `asm3.configuration.default_vaccination_type()`,
+a shelter-configured system default (apparently set to a "combo" type on
+this shelter's ASM account), which is exactly how ~100 records got
+mislabeled previously. To prevent a repeat, this script:
   1. Reads ASM's live vaccinationtype table via a custom SQL report (see
      ASM_VACCINATION_TYPES_REPORT_TITLE / SETUP below) every run, rather
      than trusting a hardcoded ID/name list that can drift out of date.
   2. Only sends a row when DaySmart's reminder item.label has a confident
      normalized match against one of those real names. A reminder with no
      confident match is SKIPPED and logged for manual review -- never sent
-     under a best-guess/default type.
+     under a best-guess/default type, so ASM's own default-type fallback
+     above never gets triggered by this script.
+
+FIELD NAME BUG FOUND AND FIXED (2026-09-06): the given-date column is
+VACCINATIONGIVENDATE, not VACCINATIONDATE -- also confirmed against the
+real csv_import source. An earlier version of this script sent
+"VACCINATIONDATE", which ASM's importer does not recognize.
 
 ISACTIVE BUG FIX (found during the field-mapping review, 2026-09-04): a
 DaySmart reminder can be superseded/cancelled (isActive: false, with a
@@ -191,7 +200,7 @@ def build_rows(
             "ANIMALCODE": code,
             "ANIMALNAME": asm_names[code],
             "VACCINATIONTYPE": matched_type,
-            "VACCINATIONDATE": fmt_date_for_asm(given_date),
+            "VACCINATIONGIVENDATE": fmt_date_for_asm(given_date),
             "VACCINATIONDUEDATE": fmt_date_for_asm(r.get("dueDate", "")),
             "VACCINATIONCOMMENTS": r.get("note", ""),
         }

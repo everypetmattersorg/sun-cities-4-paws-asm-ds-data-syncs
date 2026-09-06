@@ -13,7 +13,7 @@ DaySmart patient name, e.g. `Biscuit - A2024001`.
 | `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM |
 | `daysmart-to-asm-patient-profile-sync.yml` | DS -> ASM | Date of birth, color, breed | Skips fields ASM already has a matching value for |
 | `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | Given vaccinations | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
-| `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | Medications, labs, dewormers, treatments, supplements, preventatives | **Known gap -- see below.** Refuses live writes until configured |
+| `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | Medications, labs, dewormers, treatments, supplements, preventatives | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
 | `asm-to-daysmart-create-patients.yml` | ASM -> DS | Creates new DaySmart patients for ASM animals that don't have one yet, named `Name - ASMCODE`, populated with species/sex/breed/color/chip/DOB | Skips any ASM animal already matched in DaySmart by name or code |
 
 All six run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
@@ -66,13 +66,12 @@ PATIENT_PROFILE_SYNC_REPORT_TO
 VACCINATION_SYNC_REPORT_TO
 MEDICAL_NOTES_SYNC_REPORT_TO
 CREATE_PATIENTS_REPORT_TO
-ASM_MEDICAL_REPORT_TITLE   (see step 4 -- leave unset until that report exists)
 ```
 
 `*_REPORT_TO` secrets are comma-separated email addresses; each flow emails
 its own report, so different flows can go to different people if useful.
 
-### 2. Two custom SQL reports in ASM (required for vaccination sync)
+### 2. Three custom SQL reports in ASM (required for vaccination + medical notes sync)
 
 Reports -> Add report -> SQL/Advanced type, no criteria, these **exact**
 titles (the script matches on title):
@@ -106,33 +105,55 @@ SELECT ID, VaccinationType FROM vaccinationtype ORDER BY VaccinationType
 If either is missing or misnamed, `daysmart-to-asm-vaccination-sync`
 refuses to write anything that run and reports why, rather than guessing.
 
+**`Medical Regimens (All Time)`** -- existing medical/treatment records,
+for the medical notes sync's duplicate check:
+```sql
+SELECT
+    a.ShelterCode AS ShelterCode,
+    a.AnimalName AS AnimalName,
+    am.TreatmentName AS MedicalName,
+    am.StartDate AS MedicalGivenDate,
+    am.Dosage AS MedicalDosage,
+    am.Comments AS MedicalComments
+FROM animalmedical am
+INNER JOIN animal a ON a.ID = am.AnimalID
+ORDER BY a.ShelterCode
+```
+
+If missing or misnamed, `daysmart-to-asm-medical-notes-sync` refuses to
+write anything that run and reports why.
+
 ### 3. Find your DaySmart shelter client ID
 
 Run `asm-to-daysmart-create-patients` manually from the Actions tab with
 "List DaySmart clients and exit" checked. Find the shelter's own client in
 the log output, then set `DS_SHELTER_CLIENT_ID` (step 1) to its ID.
 
-### 4. Medical notes duplicate check (currently unresolved)
+### 4. Field names -- verified against ASM3's real source
 
-Unlike vaccinations, ASM has no confirmed read API or existing report for
-previously-imported medical/treatment records, so
-`daysmart-to-asm-medical-notes-sync` **cannot yet verify an item hasn't
-already been sent to ASM in an earlier run**, and refuses to write live
-data until `ASM_MEDICAL_REPORT_TITLE` is set to a real custom SQL report
-returning existing `MEDICALNAME`/`MEDICALDATE` rows per `ShelterCode`.
-Which ASM table `csv_import`'s `MEDICALNAME`/`MEDICALDATE`/`MEDICALDOSAGE`/
-`MEDICALCOMMENTS` columns actually write into hasn't been confirmed yet --
-that needs to be nailed down before this flow can safely run live.
+Every ASM `csv_import` column name used across all six flows was checked
+against ASM3's actual open-source importer
+(`src/asm3/csvimport.py` in [sheltermanager/asm3](https://github.com/sheltermanager/asm3)
+on GitHub) before this rebuild shipped, rather than left as guesses. That
+check caught two real bugs before they ever ran live:
 
-### 5. Field names still unverified
+- The vaccination sync was sending `VACCINATIONDATE`; the real column is
+  **`VACCINATIONGIVENDATE`**.
+- The medical notes sync was sending `MEDICALDATE`; the real column is
+  **`MEDICALGIVENDATE`**.
+- The patient profile sync's color and breed columns were also corrected:
+  **`ANIMALCOLOR`** (not `ANIMALCOLOUR`) and **`ANIMALBREED1`** (not
+  `ANIMALBREED`, the singular form originally guessed).
 
-`daysmart-to-asm-patient-profile-sync`'s ASM `csv_import` column names for
-date of birth, color, and breed (`ANIMALDOB`, `ANIMALCOLOUR`,
-`ANIMALBREED`) are best-effort guesses following the `ANIMALxxx` pattern
-already proven for microchip (`ANIMALMICROCHIP`) -- not yet confirmed
-against ASM's own `csv_import` source or docs. Run that flow once via
-`workflow_dispatch` in dry run and check the log for `csv_import` "errors"
-mentioning these columns before flipping `LIVE_MODE` on.
+The same check also confirmed *why* the original vaccination mislabeling
+bug happened: an unmatched `VACCINATIONTYPE` string doesn't get left
+blank -- ASM's importer falls back to a shelter-configured "default
+vaccination type" (apparently set to a combo vaccine on this account).
+`daysmart-to-asm-vaccination-sync`'s type-matching step exists specifically
+so this script never sends an unmatched type and never triggers that
+fallback. Color and breed mismatches, by contrast, are confirmed to just
+leave the field unset -- a data gap, not data corruption -- so those two
+fields don't need the same type-matching machinery.
 
 ## Not yet built
 

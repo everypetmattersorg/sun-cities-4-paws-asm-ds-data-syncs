@@ -18,12 +18,16 @@ the likely place a per-exam weight would live -- returns an auth-scheme
 error rather than data. Out of scope until DaySmart's real weight endpoint
 is found.
 
-FIELD NAMES REQUIRING VERIFICATION: the ASM csv_import column names for
-DOB/color/breed below (ASM_CSV_COLUMN_*) are best-effort guesses following
-the ANIMALxxx convention already proven for microchip (ANIMALMICROCHIP) --
-NOT yet confirmed against ASM's csv_import source/docs. Run once via
-workflow_dispatch in dry-run and check the log for csv_import "errors" on
-these columns before enabling --live.
+FIELD NAMES: confirmed against ASM3's real open-source csv_import handler
+(src/asm3/csvimport.py on GitHub) -- DOB is ANIMALDOB, color is
+ANIMALCOLOR (not ANIMALCOLOUR), and breed is ANIMALBREED1 (not the
+singular ANIMALBREED originally guessed here -- ASM also has an
+ANIMALBREED2 slot for a second/mixed breed, not used here since DaySmart
+only exposes one breed per patient). Color and breed are both resolved via
+a case-insensitive name lookup against ASM's basecolour/breed tables; an
+unmatched value is left unset (ID 0) rather than silently substituted with
+a wrong-but-real value like the vaccination type bug -- confirmed via the
+same source read, so this is a data gap at worst, not data corruption.
 
 Matching: the ASM shelter code embedded in the DaySmart patient name (e.g.
 "Biscuit - A2024001"). Deceased/adopted/inactive animals are excluded on
@@ -58,9 +62,9 @@ REPORT_TO = [addr.strip() for addr in os.environ.get("PATIENT_PROFILE_SYNC_REPOR
 
 FLOW_NAME = "DaySmart to ASM Patient Profile Data Sync"
 
-ASM_CSV_COLUMN_DOB = "ANIMALDOB"          # UNVERIFIED -- see docstring
-ASM_CSV_COLUMN_COLOR = "ANIMALCOLOUR"     # UNVERIFIED -- see docstring
-ASM_CSV_COLUMN_BREED = "ANIMALBREED"      # UNVERIFIED -- see docstring
+ASM_CSV_COLUMN_DOB = "ANIMALDOB"
+ASM_CSV_COLUMN_COLOR = "ANIMALCOLOR"
+ASM_CSV_COLUMN_BREED = "ANIMALBREED1"
 
 DOB_TOLERANCE_DAYS = 3
 

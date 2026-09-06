@@ -39,14 +39,13 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           MEDICAL_NOTES_SYNC_REPORT_TO: ${{ secrets.MEDICAL_NOTES_SYNC_REPORT_TO }}
-          ASM_MEDICAL_REPORT_TITLE: ${{ secrets.ASM_MEDICAL_REPORT_TITLE }}
         run: |
           # Live writes require the repo variable LIVE_MODE=true (Settings ->
-          # Actions -> Variables) AND ASM_MEDICAL_REPORT_TITLE configured
-          # (the script itself refuses to write live without it -- see its
-          # DUPLICATE CHECK docstring). Until then every run is a dry run.
-          # A workflow_dispatch run can also force a one-off live attempt
-          # via its "live" checkbox, independent of LIVE_MODE.
+          # Actions -> Variables) AND the "Medical Regimens (All Time)" ASM
+          # report to exist (the script itself refuses to write live
+          # without it -- see its SETUP docstring). Until then every run is
+          # a dry run. A workflow_dispatch run can also force a one-off
+          # live attempt via its "live" checkbox, independent of LIVE_MODE.
           if [ "${{ vars.LIVE_MODE }}" = "true" ] || [ "${{ inputs.live }}" = "true" ]; then
             python3 scripts/daysmart_to_asm_medical_notes_sync.py --live
           else

@@ -6,18 +6,53 @@ diagnostics, dewormers, treatments, supplements, preventatives -- spay/
 neuter is excluded, that's daysmart_to_asm_spay_neuter_sync.py's job) and
 writes them to the matching ASM shelter animal via csv_import.
 
-DUPLICATE CHECK -- KNOWN LIMITATION: unlike the vaccination sync, ASM has
-no confirmed read API or existing custom SQL report for previously-imported
-medical/regimen records, so this script cannot yet verify a given DaySmart
-invoice item hasn't already been sent to ASM in an earlier run. Per this
-project's requirement that nothing gets uploaded without a duplicate check,
-this script REFUSES to write anything live until ASM_MEDICAL_REPORT_TITLE
-below is set to a real custom SQL report (Reports -> Add report, SQL/
-Advanced type, no criteria) that returns existing MEDICALNAME/MEDICALDATE
-rows per ShelterCode from whichever ASM table csv_import's MEDICALNAME/
-MEDICALDATE/MEDICALDOSAGE/MEDICALCOMMENTS columns actually write into --
-that table has not been confirmed yet. Within a single run, exact repeat
-items (same animal + name + date) are still deduped against each other.
+FIELD NAME BUG FOUND AND FIXED (2026-09-06): the date column is
+MEDICALGIVENDATE, not MEDICALDATE. Confirmed against ASM3's real
+open-source csv_import handler (src/asm3/csvimport.py on GitHub), which
+reads MEDICALTYPE/MEDICALNAME/MEDICALDOSAGE/MEDICALGIVENDATE/MEDICALCOMMENTS
+and passes them to asm3.medical.insert_regimen_from_form(), writing into
+the animalmedical table (TreatmentName, Dosage, StartDate, Comments,
+MedicalTypeID, status="2"/completed, singlemulti="0"/single dose). An
+earlier version of this script sent "MEDICALDATE", which ASM's importer
+does not recognize -- every row would have landed with a blank StartDate.
+This project has already been burned once by an unverified field-name
+guess (the DaySmart "birthday" vs "birthdate" bug) and once by an
+unverified default (~100 vaccination records mislabeled) -- checking the
+real source before shipping is exactly what those lessons argue for.
+
+MEDICALTYPE is intentionally still not sent: csv_import resolves it via a
+lookup against lksmedicaltype.MedicalTypeName with create=False, and
+silently writes MedicalTypeID="0" (i.e. leaves it unset) for anything
+missing or unmatched -- confirmed via the same source read. That's a data
+gap, not data corruption (unlike the vaccination type bug, which silently
+substituted a WRONG real type), so it's left unset here rather than
+guessing at ASM's lksmedicaltype names without verifying them the same way.
+
+DUPLICATE CHECK: reads ASM's existing regimen records via
+ASM_MEDICAL_REPORT_TITLE (see SETUP below) and skips any DaySmart invoice
+item that already has a matching ASM record (same animal, same name, same
+date). If that report can't be read, nothing is written this run --
+writing blind without a working duplicate check is exactly what this
+script exists to prevent. Within a single run, exact repeat items are
+also deduped against each other before the ASM check even runs.
+
+SETUP: a custom SQL report must exist in ASM (Reports -> Add report,
+SQL/Advanced type, no criteria) with this exact title:
+
+  "Medical Regimens (All Time)"  (ASM_MEDICAL_REPORT_TITLE)
+    SELECT
+        a.ShelterCode AS ShelterCode,
+        a.AnimalName AS AnimalName,
+        am.TreatmentName AS MedicalName,
+        am.StartDate AS MedicalGivenDate,
+        am.Dosage AS MedicalDosage,
+        am.Comments AS MedicalComments
+    FROM animalmedical am
+    INNER JOIN animal a ON a.ID = am.AnimalID
+    ORDER BY a.ShelterCode
+
+If it's missing or misnamed, this script logs why and writes nothing that
+run.
 
 Matching: the ASM shelter code embedded in the DaySmart patient name (e.g.
 "Biscuit - A2024001"). Deceased/adopted/inactive animals are excluded on
@@ -52,10 +87,7 @@ REPORT_TO = [addr.strip() for addr in os.environ.get("MEDICAL_NOTES_SYNC_REPORT_
 
 FLOW_NAME = "DaySmart to ASM Medical Notes Data Sync"
 
-# Set once a real custom SQL report exists in ASM returning existing
-# MEDICALNAME/MEDICALDATE rows per ShelterCode -- see DUPLICATE CHECK above.
-# Left unset intentionally: this flow will not write live data until it is.
-ASM_MEDICAL_REPORT_TITLE = os.environ.get("ASM_MEDICAL_REPORT_TITLE", "").strip()
+ASM_MEDICAL_REPORT_TITLE = "Medical Regimens (All Time)"
 
 INCLUDE_TYPES = {
     "medication", "medications",
@@ -76,8 +108,7 @@ def _ci_get(row: dict, *names: str):
 
 
 def load_asm_existing_medical() -> dict[str, list[dict]] | None:
-    if not ASM_MEDICAL_REPORT_TITLE:
-        return None
+    """SHELTERCODE -> list of {name, date} regimens already recorded in ASM."""
     raw = asm.get_report(ASM_MEDICAL_REPORT_TITLE)
     if raw is None:
         return None
@@ -88,8 +119,9 @@ def load_asm_existing_medical() -> dict[str, list[dict]] | None:
             continue
         by_code.setdefault(code, []).append({
             "name": (_ci_get(row, "MedicalName") or "").strip(),
-            "date": _ci_get(row, "MedicalDate"),
+            "date": _ci_get(row, "MedicalGivenDate"),
         })
+    log.info("ASM: existing medical regimen records loaded for %d animal(s).", len(by_code))
     return by_code
 
 
@@ -139,7 +171,7 @@ def build_rows(
             "ANIMALCODE": code,
             "ANIMALNAME": asm_names[code],
             "MEDICALNAME": name,
-            "MEDICALDATE": date_str,
+            "MEDICALGIVENDATE": date_str,
             "MEDICALDOSAGE": dosage,
             "MEDICALCOMMENTS": f"Invoice: {(item.get('invoice') or {}).get('label', '')}",
         }
@@ -169,15 +201,16 @@ def main():
     asm_names = asm.get_animal_names(animals)
 
     asm_existing_medical = load_asm_existing_medical()
-    if asm_existing_medical is None and args.live:
+    if asm_existing_medical is None:
         log.error(
-            "ASM_MEDICAL_REPORT_TITLE is not set (or the report couldn't be read) -- "
-            "refusing to write live medical notes data without a working cross-run "
-            "duplicate check. See DUPLICATE CHECK in this script's docstring. "
-            "Running as dry run instead."
+            "Could not read the required ASM report '%s' -- refusing to write any "
+            "medical notes data this run (writing without a working duplicate check "
+            "is exactly what this script exists to prevent). See SETUP in the docstring.",
+            ASM_MEDICAL_REPORT_TITLE,
         )
-        args.live = False
-    asm_existing_medical = asm_existing_medical or {}
+        send_sync_report(FLOW_NAME, [], REPORT_TO, dry_run=not args.live, send_failed=True)
+        log.info("=== %s aborted at %s ===", FLOW_NAME, datetime.now(timezone.utc).isoformat())
+        return
 
     rows, skipped = build_rows(token, patients, asm_names, asm_existing_medical)
 
