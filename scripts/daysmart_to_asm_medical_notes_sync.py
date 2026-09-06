@@ -39,7 +39,7 @@ also deduped against each other before the ASM check even runs.
 SETUP: a custom SQL report must exist in ASM (Reports -> Add report,
 SQL/Advanced type, no criteria) with this exact title:
 
-  "Medical Regimens (All Time)"  (ASM_MEDICAL_REPORT_TITLE)
+  "Medical Notes (All Time)"  (ASM_MEDICAL_REPORT_TITLE)
     SELECT
         a.ShelterCode AS ShelterCode,
         a.AnimalName AS AnimalName,
@@ -87,7 +87,7 @@ REPORT_TO = [addr.strip() for addr in os.environ.get("MEDICAL_NOTES_SYNC_REPORT_
 
 FLOW_NAME = "DaySmart to ASM Medical Notes Data Sync"
 
-ASM_MEDICAL_REPORT_TITLE = "Medical Regimens (All Time)"
+ASM_MEDICAL_REPORT_TITLE = "Medical Notes (All Time)"
 
 INCLUDE_TYPES = {
     "medication", "medications",

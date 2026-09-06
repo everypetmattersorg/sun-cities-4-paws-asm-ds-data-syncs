@@ -105,7 +105,7 @@ SELECT ID, VaccinationType FROM vaccinationtype ORDER BY VaccinationType
 If either is missing or misnamed, `daysmart-to-asm-vaccination-sync`
 refuses to write anything that run and reports why, rather than guessing.
 
-**`Medical Regimens (All Time)`** -- existing medical/treatment records,
+**`Medical Notes (All Time)`** -- existing medical/treatment records,
 for the medical notes sync's duplicate check:
 ```sql
 SELECT
