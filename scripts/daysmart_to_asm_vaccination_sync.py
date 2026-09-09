@@ -110,8 +110,16 @@ def _ci_get(row: dict, *names: str):
 
 
 def normalise_vax_name(s: str) -> str:
-    """Strip DaySmart's trailing '*' and normalize whitespace/case for matching."""
-    return re.sub(r"\s+", " ", (s or "").strip().rstrip("*").strip()).lower()
+    """
+    Strip DaySmart's trailing '*' and normalize whitespace/case/wording for
+    matching. Applied to both sides (DaySmart labels and ASM type names), so
+    it's safe regardless of which side spells it out -- confirmed via a real
+    dry run that DaySmart uses "Rabies 1 year"/"Rabies 3 year" while ASM's
+    vaccinationtype table uses "Rabies 1 yr"/"Rabies 3 yr" for the same
+    vaccines.
+    """
+    normalised = re.sub(r"\s+", " ", (s or "").strip().rstrip("*").strip()).lower()
+    return re.sub(r"\byears?\b", "yr", normalised)
 
 
 def load_asm_vaccination_types() -> dict[str, str] | None:
