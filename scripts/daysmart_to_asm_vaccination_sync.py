@@ -113,13 +113,23 @@ def normalise_vax_name(s: str) -> str:
     """
     Strip DaySmart's trailing '*' and normalize whitespace/case/wording for
     matching. Applied to both sides (DaySmart labels and ASM type names), so
-    it's safe regardless of which side spells it out -- confirmed via a real
-    dry run that DaySmart uses "Rabies 1 year"/"Rabies 3 year" while ASM's
-    vaccinationtype table uses "Rabies 1 yr"/"Rabies 3 yr" for the same
-    vaccines.
+    it's safe regardless of which side spells it out. Two wording variations
+    confirmed via real dry runs against live data:
+      - DaySmart uses "Rabies 1 year"/"Rabies 3 year"; ASM's vaccinationtype
+        table uses the abbreviated "Rabies 1 yr"/"Rabies 3 yr".
+      - ASM's FVRCP/FELV combo dose/year entries were created as "FVRCP/FELV
+        COMBO #1" etc.; DaySmart's reminder item labels are "FVRCP/FELV #1"
+        etc., with no "combo" in them.
+    Neither is a typo, just a different convention on each side -- safe to
+    fold together. An actual misspelling (e.g. ASM's "FVRVP #2" instead of
+    "FVRCP #2") is NOT handled here; that needs a real fix in ASM's data,
+    not a fuzzy-match guess (see this project's ~100-record vaccination
+    mislabeling history for why guessing at a type match is dangerous).
     """
     normalised = re.sub(r"\s+", " ", (s or "").strip().rstrip("*").strip()).lower()
-    return re.sub(r"\byears?\b", "yr", normalised)
+    normalised = re.sub(r"\byears?\b", "yr", normalised)
+    normalised = re.sub(r"\bcombo\b", "", normalised)
+    return re.sub(r"\s+", " ", normalised).strip()
 
 
 def load_asm_vaccination_types() -> dict[str, str] | None:
