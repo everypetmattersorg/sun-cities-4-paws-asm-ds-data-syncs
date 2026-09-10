@@ -9,12 +9,24 @@ records this way -- there is no other shared ID between the two systems.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # ASM shelter codes look like A2024001, D2025012, etc. -- one uppercase
 # letter + 7-8 digits. Confirmed against real ASM data across this project.
 ASM_CODE_PATTERN = re.compile(r"\s*-\s*([A-Z]\d{4,})\s*$")
 ASM_CODE_VALID = re.compile(r"^[A-Z]\d{7,8}$")
+
+# The clinic is in Arizona, which does not observe DST -- fixed UTC-7 year
+# round. DaySmart returns timestamps in UTC; taking the calendar date
+# without converting first rolls anything recorded in the Arizona evening
+# (roughly 5pm onward) into the next day.
+_ARIZONA_TZ = timezone(timedelta(hours=-7))
+
+
+def _to_arizona(dt: datetime) -> datetime:
+    """Convert an offset-aware datetime to Arizona local time. Offset-naive
+    values (ASM's own date fields have no tzinfo) pass through unchanged."""
+    return dt.astimezone(_ARIZONA_TZ) if dt.tzinfo else dt
 
 
 def normalise(s: str | None) -> str:
@@ -53,9 +65,12 @@ def parse_date(value: str | None) -> datetime | None:
 
 
 def fmt_date_for_asm(value: str | None) -> str:
-    """MM/DD/YYYY -- the format ASM's csv_import expects for date columns."""
+    """MM/DD/YYYY -- the format ASM's csv_import expects for date columns.
+
+    Converts to Arizona local time first -- see _to_arizona().
+    """
     dt = parse_date(value)
-    return dt.strftime("%m/%d/%Y") if dt else ""
+    return _to_arizona(dt).strftime("%m/%d/%Y") if dt else ""
 
 
 def dates_close(a: str | None, b: str | None, tolerance_days: int) -> bool:
@@ -68,9 +83,11 @@ def dates_close(a: str | None, b: str | None, tolerance_days: int) -> bool:
     da, db = parse_date(a), parse_date(b)
     if da is None or db is None:
         return False
-    # Drop tzinfo so an offset-aware value from one side (DaySmart's
-    # "...+00:00") doesn't crash subtracting against an offset-naive value
-    # from the other (ASM's plain "YYYY-MM-DD..."). Losing time-of-day
-    # precision doesn't matter at multi-day tolerance.
-    da, db = da.replace(tzinfo=None), db.replace(tzinfo=None)
+    # Convert to Arizona local time before dropping tzinfo, so an
+    # offset-aware value from DaySmart ("...+00:00") lands on the same
+    # calendar date ASM would have recorded it under, then drop tzinfo so it
+    # can be subtracted against an offset-naive value from ASM's side
+    # ("YYYY-MM-DD..."). Losing time-of-day precision doesn't matter at
+    # multi-day tolerance.
+    da, db = _to_arizona(da).replace(tzinfo=None), _to_arizona(db).replace(tzinfo=None)
     return abs((da - db).days) <= tolerance_days
