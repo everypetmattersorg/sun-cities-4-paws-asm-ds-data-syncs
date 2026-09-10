@@ -47,12 +47,19 @@ def send_sync_report(
     dry_run: bool,
     send_failed: bool = False,
     skipped_duplicates: list[dict] | None = None,
+    written_label: str = "Written to ASM",
+    skipped_label: str = "Skipped -- already present in ASM",
+    skipped_note: str = "These matched an existing ASM record and were not re-sent.",
 ) -> None:
     """
-    Email a report of what this run wrote to ASM (or would have, in dry
-    run). `skipped_duplicates` lists rows that were NOT sent because a
-    matching record already exists in ASM -- surfaced so a human can see
-    the dedup check is doing its job, not silently dropping data.
+    Email a report of what this run wrote (or would have, in dry run).
+    `skipped_duplicates` lists rows that were NOT sent, with `skipped_label`/
+    `skipped_note` explaining why -- surfaced so a human sees the dedup
+    check (or, for asm_to_daysmart_create_patients.py, a name collision
+    needing manual attention) doing its job, not silently dropping data.
+    `written_label` names what the main table actually is -- most flows
+    write to ASM, but asm_to_daysmart_create_patients.py writes to
+    DaySmart, so this isn't hardcoded.
     """
     if not recipients:
         log.info("No report recipients configured -- skipping report email.")
@@ -74,27 +81,27 @@ def send_sync_report(
     if send_failed:
         warning_html = (
             "<p style='color:#c00;font-weight:bold;background:#fee;padding:10px;"
-            "border:1px solid #c00'>WARNING: the ASM import call for this run FAILED. "
-            "Nothing below was actually written to ASM.</p>"
+            f"border:1px solid #c00'>WARNING: this run FAILED. "
+            "Nothing below was actually written.</p>"
         )
-        warning_text = "\n*** WARNING: the ASM import call FAILED -- nothing below was written. ***\n"
+        warning_text = "\n*** WARNING: this run FAILED -- nothing below was written. ***\n"
 
     dup_html = ""
     dup_text = ""
     if skipped_duplicates:
         dup_html = f"""
-        <h3 style='color:#333;margin-bottom:4px'>Skipped -- already present in ASM ({len(skipped_duplicates)})</h3>
-        <p style='color:#666;font-size:13px'>These matched an existing ASM record and were not re-sent.</p>
+        <h3 style='color:#333;margin-bottom:4px'>{skipped_label} ({len(skipped_duplicates)})</h3>
+        <p style='color:#666;font-size:13px'>{skipped_note}</p>
         {_html_table(skipped_duplicates)}
         """
-        dup_text = f"\nSkipped -- already present in ASM ({len(skipped_duplicates)}):\n{_text_table(skipped_duplicates)}"
+        dup_text = f"\n{skipped_label} ({len(skipped_duplicates)}):\n{skipped_note}\n{_text_table(skipped_duplicates)}"
 
     html_body = f"""
     <div style='font-family:Arial,sans-serif;max-width:820px;margin:0 auto'>
       <h2 style='color:#333'>{run_label}{flow_name}</h2>
       <p style='color:#666'>Generated: {now}</p>
       {warning_html}
-      <h3 style='color:#333;margin-bottom:4px'>Written to ASM ({len(written_rows)})</h3>
+      <h3 style='color:#333;margin-bottom:4px'>{written_label} ({len(written_rows)})</h3>
       {_html_table(written_rows)}
       {dup_html}
       <p style='color:#aaa;font-size:12px;margin-top:32px'>
@@ -106,7 +113,7 @@ def send_sync_report(
         flow_name,
         f"Generated: {now}",
         warning_text,
-        f"Written to ASM ({len(written_rows)}):",
+        f"{written_label} ({len(written_rows)}):",
         _text_table(written_rows),
         dup_text,
     ])

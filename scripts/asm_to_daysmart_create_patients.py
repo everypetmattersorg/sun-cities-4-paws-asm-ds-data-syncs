@@ -19,6 +19,14 @@ synced anywhere else in this repo -- no confirmed DaySmart field.
 Duplicate check: an ASM animal is skipped if DaySmart already has a patient
 matching it by full "Name - CODE", by base name alone (not yet tagged with
 an ASM code), or by the ASM code appearing anywhere in any patient's name.
+A base-name-only match (same name, no ASM tag yet) is a NAME COLLISION,
+not an automatic match -- this script never guesses whether it's the same
+animal or a coincidence, and never creates a second profile for it. These
+are surfaced in the "Needs manual review" section of the email report
+every run, so staff catch new ones without anyone having to dig through
+logs: if it's the same animal, rename the existing DaySmart patient to
+"Name - ASMCODE" and the next run recognizes it automatically; if it's a
+different animal, no action needed.
 
 SETUP:
   1. Add DS_SHELTER_CLIENT_ID to the repo's secrets/.env.
@@ -234,6 +242,7 @@ def main():
     asm_animals = asm.get_shelter_animals()
 
     to_create = []
+    name_collisions: list[dict] = []
     skipped_in_ds = skipped_bad_code = skipped_deceased_archived = 0
 
     for animal in asm_animals:
@@ -254,7 +263,17 @@ def main():
             skipped_in_ds += 1
             continue
         if normalise(name) in ds_base_names:
+            # A DaySmart patient with the same base name exists but isn't
+            # tagged with this ASM code yet -- never guess whether it's the
+            # same animal. Surfaced in the report below for a human to
+            # either rename the existing DaySmart patient to "Name - CODE"
+            # (if it's the same animal -- future runs then recognize it
+            # automatically) or leave alone (if it's a different animal).
             log.info("  SKIPPED '%s' -- name '%s' already exists in DaySmart (no ASM tag yet).", ds_name, name)
+            name_collisions.append({
+                "ASM Code": code, "ASM Name": name,
+                "Would-Be DaySmart Name": ds_name, "DaySmart Name Matched": name,
+            })
             skipped_in_ds += 1
             continue
         if code in asm_codes_in_ds:
@@ -270,7 +289,18 @@ def main():
 
     if not to_create:
         log.info("Nothing to do -- all ASM animals are already in DaySmart.")
-        send_sync_report(FLOW_NAME, [], REPORT_TO, dry_run=not args.live)
+        send_sync_report(
+            FLOW_NAME, [], REPORT_TO, dry_run=not args.live,
+            written_label="Created in DaySmart",
+            skipped_duplicates=name_collisions,
+            skipped_label="Needs manual review -- name collision in DaySmart (no ASM tag yet)",
+            skipped_note=(
+                "A DaySmart patient with this name already exists but isn't tagged with the "
+                'ASM code. If it\'s the same animal, rename it to "Name - ASMCODE" in DaySmart '
+                "and future runs will recognize it automatically. If it's a different animal, "
+                "no action needed."
+            ),
+        )
         log.info("=== %s complete at %s ===", FLOW_NAME, datetime.now(timezone.utc).isoformat())
         return
 
@@ -340,7 +370,18 @@ def main():
         else:
             failed += 1
 
-    send_sync_report(FLOW_NAME, created_animals, REPORT_TO, dry_run=not args.live)
+    send_sync_report(
+        FLOW_NAME, created_animals, REPORT_TO, dry_run=not args.live,
+        written_label="Created in DaySmart",
+        skipped_duplicates=name_collisions,
+        skipped_label="Needs manual review -- name collision in DaySmart (no ASM tag yet)",
+        skipped_note=(
+            "A DaySmart patient with this name already exists but isn't tagged with the "
+            'ASM code. If it\'s the same animal, rename it to "Name - ASMCODE" in DaySmart '
+            "and future runs will recognize it automatically. If it's a different animal, "
+            "no action needed."
+        ),
+    )
 
     log.info("--- Summary ---")
     log.info("Created%s: %d", " (would create)" if not args.live else "", len(created_animals))
