@@ -72,6 +72,8 @@ Run (live):               python3 scripts/daysmart_to_asm_vaccination_sync.py --
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import logging
 import os
 import re
@@ -107,6 +109,20 @@ def _ci_get(row: dict, *names: str):
         if name.upper() in upper:
             return upper[name.upper()]
     return None
+
+
+def _rows_to_csv(rows: list[dict]) -> str:
+    """Render a list of same-shaped row dicts as CSV text, for log review --
+    mirrors the [DRY RUN] CSV preview already logged for rows to write, so
+    the skipped-as-duplicate rows are just as easy to pull into a
+    spreadsheet for a human to review."""
+    if not rows:
+        return ""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue()
 
 
 def normalise_vax_name(s: str) -> str:
@@ -269,6 +285,9 @@ def main():
         return
 
     rows, skipped_dup, skipped_no_match = build_rows(token, patients, asm_names, asm_existing_vax, asm_vax_types)
+
+    if skipped_dup:
+        log.info("Skipped -- already in ASM (%d):\n%s", len(skipped_dup), _rows_to_csv(skipped_dup))
 
     ok = asm.csv_import(rows, FLOW_NAME, args.live)
     if args.live:
