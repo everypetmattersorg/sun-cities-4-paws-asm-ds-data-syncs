@@ -69,6 +69,27 @@ def paginate(token: str, endpoint: str, extra_params: dict | None = None) -> lis
     return results
 
 
+def update_patient(token: str, patient_id: str, payload: dict) -> bool:
+    """
+    PATCH an existing DaySmart patient with a partial field update (e.g.
+    {"sex": {"id": 4}}). Mirrors asm_to_daysmart_create_patients.py's
+    ds_create_patient() request shape, which is the only other confirmed
+    DaySmart write in this repo -- same base URL/auth, POST swapped for
+    PATCH against the specific patient's URL.
+    """
+    url = f"{DS_DOMAIN}/api/1.0.0/{DS_API_KEY}/patients/{patient_id}"
+    resp = requests.patch(
+        url,
+        headers={**headers(token), "Content-Type": "application/json"},
+        json=payload,
+        timeout=15,
+    )
+    if resp.status_code in (200, 201, 204):
+        return True
+    log.warning("  Failed to update patient %s: HTTP %s -- %s", patient_id, resp.status_code, resp.text[:400])
+    return False
+
+
 def get_active_patients_with_asm_code(token: str) -> list[dict]:
     """
     All Active DaySmart patients that have a valid ASM code in their name.

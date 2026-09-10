@@ -52,7 +52,7 @@ import requests
 sys.path.insert(0, os.path.dirname(__file__))
 
 from common import asm, daysmart
-from common.matching import ASM_CODE_VALID, excluded_reason, normalise
+from common.matching import ASM_CODE_VALID, DS_SEX_LABEL, excluded_reason, map_sex_from_asm, normalise
 from common.report import send_sync_report
 
 logging.basicConfig(
@@ -69,17 +69,6 @@ FLOW_NAME = "ASM to DaySmart Patient Creation"
 
 ASM_CODE_PATTERN = re.compile(r"\s*-\s*([A-Z]\d{4,})\s*$")
 ASM_CODE_ANYWHERE = re.compile(r"\b([A-Z]\d{4,})\b")  # finds ASM codes anywhere in a name
-
-# DaySmart sex id lookup: (sex, is_neutered) -> id
-# ids confirmed from live DaySmart data:
-#   1=Male (intact), 2=Male (neutered), 3=Female (intact), 4=Female (spayed), 5=Unknown
-_DS_SEX_ID: dict[tuple[str, bool], int] = {
-    ("male", False): 1,
-    ("male", True): 2,
-    ("female", False): 3,
-    ("female", True): 4,
-}
-_DS_SEX_LABEL = {1: "Male (intact)", 2: "Male (neutered)", 3: "Female (intact)", 4: "Female (spayed)", 5: "Unknown"}
 
 _SPECIES_SYNONYMS: dict[str, list[str]] = {
     "cat": ["cat", "feline", "kitten"],
@@ -180,16 +169,6 @@ def map_species(asm_value: str, species_map: dict) -> dict | None:
                 if any(a in ds_key for a in aliases):
                     return ds_val
     return None
-
-
-def map_sex_from_asm(sexname: str, neutered: int) -> int:
-    s = (sexname or "").strip().lower()
-    n = neutered == 1
-    if "female" in s:
-        return _DS_SEX_ID[("female", n)]
-    if "male" in s:
-        return _DS_SEX_ID[("male", n)]
-    return 5  # Unknown
 
 
 def map_breed(asm_value: str, breed_map: dict) -> int | None:
@@ -353,7 +332,7 @@ def main():
             except Exception:
                 pass
 
-        sex_label = _DS_SEX_LABEL.get(sex_id, "Unknown")
+        sex_label = DS_SEX_LABEL.get(sex_id, "Unknown")
         report_row = {"Name": name, "ASM Code": code, "Species": sp["label"], "Sex": sex_label, "Location": asm_loc}
 
         if not args.live:

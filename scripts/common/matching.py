@@ -73,6 +73,36 @@ def fmt_date_for_asm(value: str | None) -> str:
     return _to_arizona(dt).strftime("%m/%d/%Y") if dt else ""
 
 
+# DaySmart's 'sex' field combines sex + altered-status into one of 5 values
+# -- there is no separate boolean like ASM's NEUTERED. ids confirmed from
+# live DaySmart data: 1=Male (intact), 2=Male (neutered), 3=Female (intact),
+# 4=Female (spayed), 5=Unknown. ASM has no distinct "spayed" concept --
+# SEXNAME (Male/Female/Unknown) + the NEUTERED boolean cover every DaySmart
+# value with one gap: ASM's "Unknown, NEUTERED=1" has no DaySmart equivalent
+# (DaySmart's "Unknown" carries no altered-status info) and falls back to
+# plain Unknown below.
+DS_SEX_ID: dict[tuple[str, bool], int] = {
+    ("male", False): 1,
+    ("male", True): 2,
+    ("female", False): 3,
+    ("female", True): 4,
+}
+DS_SEX_LABEL = {1: "Male (intact)", 2: "Male (neutered)", 3: "Female (intact)", 4: "Female (spayed)", 5: "Unknown"}
+DS_SEX_ALTERED_IDS = {2, 4}  # DaySmart sex ids that mean "already spayed/neutered"
+DS_SEX_UNKNOWN_ID = 5
+
+
+def map_sex_from_asm(sexname: str, neutered: int) -> int:
+    """ASM's SEXNAME + NEUTERED -> DaySmart's combined sex id."""
+    s = (sexname or "").strip().lower()
+    n = neutered == 1
+    if "female" in s:
+        return DS_SEX_ID[("female", n)]
+    if "male" in s:
+        return DS_SEX_ID[("male", n)]
+    return DS_SEX_UNKNOWN_ID
+
+
 def dates_close(a: str | None, b: str | None, tolerance_days: int) -> bool:
     """
     True if two date strings represent the same calendar date within

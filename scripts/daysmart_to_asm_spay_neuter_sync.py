@@ -1,14 +1,25 @@
 """
 DaySmart to ASM Neuter/Spay Data Sync
 ------------------------------------
-Finds spay/neuter procedures billed in DaySmart (/invoice-items where the
-item name contains "spay" or "neuter") and marks the matching ASM animal as
-neutered, with the procedure date, via csv_import.
+Marks the matching ASM animal as neutered via csv_import, from two
+independent DaySmart signals:
+
+  1. A spay/neuter procedure billed in DaySmart (/invoice-items where the
+     item name contains "spay" or "neuter") -- carries a real procedure
+     date.
+  2. The patient's own 'sex' field already showing spayed/neutered (DaySmart
+     id 2 or 4) -- covers an animal that arrived already fixed, so there was
+     never a DaySmart-billed procedure to match on. No procedure date is
+     available for this signal, so ANIMALNEUTEREDDATE is left blank rather
+     than guessed.
+
+Signal 1 takes priority when both fire for the same animal, since it has a
+real date.
 
 Duplicate check: an animal already marked NEUTERED=1 in ASM is skipped
 entirely -- this never re-sends or overwrites an animal ASM already has
-correct. Within a single run, only the earliest matching invoice item per
-animal is used if more than one is found.
+correct. Within a single run, only the first matching signal per animal is
+used if more than one is found (see DaySmart to ASM precedence note above).
 
 Matching: the ASM shelter code embedded in the DaySmart patient name (e.g.
 "Biscuit - A2024001"). Deceased/adopted/inactive animals are excluded on
@@ -29,7 +40,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(__file__))
 
 from common import asm, daysmart
-from common.matching import fmt_date_for_asm
+from common.matching import DS_SEX_ALTERED_IDS, fmt_date_for_asm
 from common.report import send_sync_report
 
 logging.basicConfig(
@@ -55,37 +66,39 @@ def build_rows(
     rows, skipped = [], []
     seen_this_run: set[str] = set()
 
-    for item in raw:
-        name = (item.get("name") or item.get("displayName") or "").lower()
-        if "spay" not in name and "neuter" not in name:
-            continue
-
-        patient_id = (item.get("patient") or {}).get("id", "")
-        patient = patients_by_id.get(patient_id)
-        if not patient:
-            continue
-        code = patient["asm_code"]
-        if code not in asm_names:
-            continue
-
+    def add(code: str, date_value: str) -> None:
+        if code not in asm_names or code in seen_this_run:
+            return
+        seen_this_run.add(code)
         row = {
             "ANIMALCODE": code,
             "ANIMALNAME": asm_names[code],
             "ANIMALNEUTERED": "Y",
-            "ANIMALNEUTEREDDATE": fmt_date_for_asm(item.get("date", "")),
+            "ANIMALNEUTEREDDATE": fmt_date_for_asm(date_value) if date_value else "",
         }
+        if asm_neutered.get(code):
+            skipped.append(row)
+        else:
+            rows.append(row)
 
-        already_neutered = bool(asm_neutered.get(code))
-        if already_neutered:
-            if code not in seen_this_run:
-                skipped.append(row)
-                seen_this_run.add(code)
+    # Signal 1: a billed "spay"/"neuter" invoice item -- has a real procedure date.
+    for item in raw:
+        name = (item.get("name") or item.get("displayName") or "").lower()
+        if "spay" not in name and "neuter" not in name:
             continue
+        patient_id = (item.get("patient") or {}).get("id", "")
+        patient = patients_by_id.get(patient_id)
+        if not patient:
+            continue
+        add(patient["asm_code"], item.get("date", ""))
 
-        if code in seen_this_run:
-            continue  # already queued a row for this animal this run
-        seen_this_run.add(code)
-        rows.append(row)
+    # Signal 2: the patient's own 'sex' field already shows altered -- covers
+    # an animal that arrived already fixed, with no billed procedure to match
+    # signal 1 on. Only fires for a code signal 1 didn't already claim.
+    for patient in patients_by_id.values():
+        sex_id = (patient.get("sex") or {}).get("id")
+        if sex_id in DS_SEX_ALTERED_IDS:
+            add(patient["asm_code"], "")
 
     log.info("Spay/neuter rows to write: %d (skipped %d already marked neutered in ASM)", len(rows), len(skipped))
     return rows, skipped

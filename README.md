@@ -10,16 +10,25 @@ DaySmart patient name, e.g. `Biscuit - A2024001`.
 | Workflow | Direction | What it syncs | Duplicate check |
 |---|---|---|---|
 | `daysmart-to-asm-microchip-sync.yml` | DS -> ASM | Microchip number | Skips if ASM's chip already matches |
-| `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM |
+| `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM. Two signals feed this: a billed spay/neuter invoice item (real date), or the patient's own DaySmart `sex` field already showing altered (no date, for an animal that arrived already fixed) |
 | `daysmart-to-asm-patient-profile-sync.yml` | DS -> ASM | Date of birth, color, breed | Skips fields ASM already has a matching value for |
 | `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | Given vaccinations | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
 | `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | Medications, labs, dewormers, treatments, supplements, preventatives | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
 | `asm-to-daysmart-create-patients.yml` | ASM -> DS | Creates new DaySmart patients for ASM animals that don't have one yet, named `Name - ASMCODE`, populated with species/sex/breed/color/chip/DOB | Skips any ASM animal already matched in DaySmart by name or code |
+| `asm-to-daysmart-sterilization-sync.yml` | ASM -> DS | Fills in DaySmart's `sex` field from ASM's `SEXNAME`+`NEUTERED`, but **only** for a patient whose DaySmart `sex` is still `Unknown` | DaySmart is the primary source for sterilization status (the clinic updates it directly, far more often) -- this is the fallback direction, only pulling from ASM when DaySmart has nothing of its own to overwrite |
 
-All six run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
+All seven run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
 (Arizona doesn't observe DST, so that's a fixed `16:00`/`00:00` UTC --
 see the cron lines in each workflow file). Each can also be run manually
 via `workflow_dispatch` from the Actions tab.
+
+**Sterilization status is kept in sync in both directions**, with DaySmart
+winning whenever it has data of its own (see the two rows above): DaySmart
+is where the vet clinic actually records this, so
+`daysmart-to-asm-spay-neuter-sync.yml` pushes DaySmart's status into ASM;
+`asm-to-daysmart-sterilization-sync.yml` only pulls the other way to fill a
+blank DaySmart record from ASM, and never overwrites a DaySmart value
+that's already set.
 
 **Weight is not synced anywhere in this repo.** DaySmart's patient object
 has no weight field on `/patients` or `/patients/{id}`, and
@@ -66,6 +75,7 @@ PATIENT_PROFILE_SYNC_REPORT_TO
 VACCINATION_SYNC_REPORT_TO
 MEDICAL_NOTES_SYNC_REPORT_TO
 CREATE_PATIENTS_REPORT_TO
+STERILIZATION_SYNC_REPORT_TO
 ```
 
 `*_REPORT_TO` secrets are comma-separated email addresses; each flow emails
@@ -177,7 +187,7 @@ scripts/
   common/
     asm.py          -- ASM3 API client (auth, csv_import, custom reports)
     daysmart.py      -- DaySmart Vetter API client (auth, pagination)
-    matching.py       -- ASM-code extraction/validation, date helpers
+    matching.py       -- ASM-code extraction/validation, date/sex helpers
     report.py          -- shared email report builder (Resend)
   daysmart_to_asm_microchip_sync.py
   daysmart_to_asm_spay_neuter_sync.py
@@ -185,5 +195,6 @@ scripts/
   daysmart_to_asm_vaccination_sync.py
   daysmart_to_asm_medical_notes_sync.py
   asm_to_daysmart_create_patients.py
+  asm_to_daysmart_sterilization_sync.py
 .github/workflows/   -- one workflow per script above
 ```

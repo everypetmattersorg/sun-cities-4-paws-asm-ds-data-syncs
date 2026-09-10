@@ -1,0 +1,52 @@
+name: ASM to DaySmart Sterilization Data Sync
+
+on:
+  schedule:
+    # Arizona does not observe DST (fixed UTC-7 year-round), so 9AM/5PM AZT
+    # is always 16:00/00:00 UTC.
+    - cron: "0 16 * * *"
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Actually update patients in DaySmart (unchecked = dry run)"
+        type: boolean
+        default: false
+
+jobs:
+  sterilization-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -q -r scripts/requirements.txt
+
+      - name: Run sterilization sync
+        env:
+          ASM_BASE_URL: ${{ secrets.ASM_BASE_URL }}
+          ASM_ACCOUNT: ${{ secrets.ASM_ACCOUNT }}
+          ASM_USERNAME: ${{ secrets.ASM_USERNAME }}
+          ASM_PASSWORD: ${{ secrets.ASM_PASSWORD }}
+          DS_CLIENT_ID: ${{ secrets.DS_CLIENT_ID }}
+          DS_CLIENT_SECRET: ${{ secrets.DS_CLIENT_SECRET }}
+          DS_API_KEY: ${{ secrets.DS_API_KEY }}
+          DS_DOMAIN: ${{ secrets.DS_DOMAIN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          STERILIZATION_SYNC_REPORT_TO: ${{ secrets.STERILIZATION_SYNC_REPORT_TO }}
+        run: |
+          # Live writes require the repo variable LIVE_MODE=true (Settings ->
+          # Actions -> Variables) -- set once, after dry-run reports have
+          # been reviewed. Until then every run, scheduled or manual, is a
+          # dry run. A workflow_dispatch run can also force a one-off live
+          # run via its "live" checkbox, independent of LIVE_MODE.
+          if [ "${{ vars.LIVE_MODE }}" = "true" ] || [ "${{ inputs.live }}" = "true" ]; then
+            python3 scripts/asm_to_daysmart_sterilization_sync.py --live
+          else
+            python3 scripts/asm_to_daysmart_sterilization_sync.py
+          fi
