@@ -69,16 +69,39 @@ def paginate(token: str, endpoint: str, extra_params: dict | None = None) -> lis
     return results
 
 
-def update_patient(token: str, patient_id: str, payload: dict) -> bool:
+def update_patient(token: str, patient: dict, overrides: dict) -> bool:
     """
-    PATCH an existing DaySmart patient with a partial field update (e.g.
-    {"sex": {"id": 4}}). Mirrors asm_to_daysmart_create_patients.py's
-    ds_create_patient() request shape, which is the only other confirmed
-    DaySmart write in this repo -- same base URL/auth, POST swapped for
-    PATCH against the specific patient's URL.
+    PUT a full-object update to an existing DaySmart patient. Confirmed via
+    live testing against /patients/{id}: PATCH and POST both return HTTP 403
+    with a generic auth-rejection message -- neither method is configured
+    for this resource at all. PUT is accepted, but as a full-object
+    replace, not a partial update: a field omitted from the payload gets
+    blanked out rather than left alone (confirmed via a real PUT with only
+    {"sex": ...} -- DaySmart rejected it with "name/species.id/breeds/
+    status are required").
+
+    `patient` must be the patient's own current full record (e.g. from
+    get_active_patients_with_asm_code() or a /patients GET) -- its fields
+    are used as the base payload so nothing already set gets lost.
+    `overrides` is merged on top for just the field(s) actually being
+    changed, e.g. {"sex": {"id": 4}}. A round-trip test (real PUT, then
+    GET + full field diff) confirmed this only changes the overridden
+    field(s) plus DaySmart's own server-managed updateAt/url_direct_jump.
     """
-    url = f"{DS_DOMAIN}/api/1.0.0/{DS_API_KEY}/patients/{patient_id}"
-    resp = requests.patch(
+    payload = {
+        "name": patient["name"],
+        "species": patient["species"],
+        "color": patient.get("color"),
+        "sex": patient.get("sex"),
+        "birthdate": patient.get("birthdate"),
+        "chip": patient.get("chip"),
+        "status": patient["status"],
+        "tag": patient.get("tag", ""),
+        "breeds": patient.get("breeds", []),
+        **overrides,
+    }
+    url = f"{DS_DOMAIN}/api/1.0.0/{DS_API_KEY}/patients/{patient['id']}"
+    resp = requests.put(
         url,
         headers={**headers(token), "Content-Type": "application/json"},
         json=payload,
@@ -86,7 +109,7 @@ def update_patient(token: str, patient_id: str, payload: dict) -> bool:
     )
     if resp.status_code in (200, 201, 204):
         return True
-    log.warning("  Failed to update patient %s: HTTP %s -- %s", patient_id, resp.status_code, resp.text[:400])
+    log.warning("  Failed to update patient %s: HTTP %s -- %s", patient["id"], resp.status_code, resp.text[:400])
     return False
 
 

@@ -72,7 +72,7 @@ def build_updates(
             continue
 
         updates.append({
-            "patient_id": p["id"],
+            "patient": p,
             "DaySmart Patient": p.get("name", ""),
             "ASM Code": code,
             "New Sex": DS_SEX_LABEL.get(new_sex_id, "Unknown"),
@@ -111,7 +111,7 @@ def main():
             continue
 
         log.info("Updating '%s' (%s) -> sex='%s'", u["DaySmart Patient"], u["ASM Code"], u["New Sex"])
-        if daysmart.update_patient(token, u["patient_id"], {"sex": {"id": u["sex_id"]}}):
+        if daysmart.update_patient(token, u["patient"], {"sex": {"id": u["sex_id"]}}):
             written.append(report_row)
         else:
             failed += 1
