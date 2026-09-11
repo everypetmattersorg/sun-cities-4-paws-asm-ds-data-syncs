@@ -1,11 +1,16 @@
 name: DaySmart to ASM Medical Notes Data Sync
 
+# DISABLED (2026-09-11): the script's INCLUDE_TYPES filter was found to only
+# match DaySmart's real "Laboratory / Diagnostics" itemType -- pharmacy/
+# prescription items (dewormers, antibiotics, pain meds -- ~37% of real
+# invoice items in a live check) are silently excluded, because their real
+# DaySmart itemType is "Pharmacy", not "medication" as the filter checks
+# for. The "dewormer"/"treatment"/"supplement"/"preventative" categories in
+# INCLUDE_TYPES don't match any real DaySmart itemType at all. Scheduled
+# runs are turned off until that filter is fixed and re-verified; this can
+# still be run manually via workflow_dispatch (dry run) if needed. Re-add
+# the `schedule:` block below to turn it back on.
 on:
-  schedule:
-    # Arizona does not observe DST (fixed UTC-7 year-round), so 9AM/5PM AZT
-    # is always 16:00/00:00 UTC.
-    - cron: "0 16 * * *"
-    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       live:

@@ -13,14 +13,27 @@ DaySmart patient name, e.g. `Biscuit - A2024001`.
 | `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM. Two signals feed this: a billed spay/neuter invoice item (real date), or the patient's own DaySmart `sex` field already showing altered (no date, for an animal that arrived already fixed) |
 | `daysmart-to-asm-patient-profile-sync.yml` | DS -> ASM | Date of birth, color, breed | Skips fields ASM already has a matching value for |
 | `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | Given vaccinations | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
-| `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | Medications, labs, dewormers, treatments, supplements, preventatives | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
+| `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | **DISABLED (2026-09-11)** -- see note below | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
 | `asm-to-daysmart-create-patients.yml` | ASM -> DS | Creates new DaySmart patients for ASM animals that don't have one yet, named `Name - ASMCODE`, populated with species/sex/breed/color/chip/DOB | Skips any ASM animal already matched in DaySmart by name or code |
 | `asm-to-daysmart-sterilization-sync.yml` | ASM -> DS | Fills in DaySmart's `sex` field from ASM's `SEXNAME`+`NEUTERED`, but **only** for a patient whose DaySmart `sex` is still `Unknown` | DaySmart is the primary source for sterilization status (the clinic updates it directly, far more often) -- this is the fallback direction, only pulling from ASM when DaySmart has nothing of its own to overwrite |
 
-All seven run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
+The other six run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
 (Arizona doesn't observe DST, so that's a fixed `16:00`/`00:00` UTC --
 see the cron lines in each workflow file). Each can also be run manually
 via `workflow_dispatch` from the Actions tab.
+
+**Medical notes sync is currently disabled** (its `schedule:` trigger is
+removed, manual `workflow_dispatch` still works). A live data check found
+its `INCLUDE_TYPES` filter only matches DaySmart's real "Laboratory /
+Diagnostics" itemType -- pharmacy/prescription items (dewormers,
+antibiotics, pain meds -- roughly 37% of real non-vaccination invoice
+items in a live sample) are silently excluded, since DaySmart's real
+itemType for those is "Pharmacy", not "medication" as the filter checks
+for. The "dewormer"/"treatment"/"supplement"/"preventative" categories in
+`INCLUDE_TYPES` didn't match any real DaySmart itemType at all in that
+sample. Needs the filter fixed and re-verified before turning the schedule
+back on (re-add the `schedule:` block in
+`daysmart-to-asm-medical-notes-sync.yml`).
 
 **Sterilization status is kept in sync in both directions**, with DaySmart
 winning whenever it has data of its own (see the two rows above): DaySmart
