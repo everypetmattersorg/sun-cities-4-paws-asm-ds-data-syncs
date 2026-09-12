@@ -27,6 +27,20 @@ VACCINATIONGIVENDATE, not VACCINATIONDATE -- also confirmed against the
 real csv_import source. An earlier version of this script sent
 "VACCINATIONDATE", which ASM's importer does not recognize.
 
+DATE MAPPING BUG FOUND AND FIXED (2026-09-12) -- confirmed against ASM3's
+real csvimport.py: VACCINATIONDUEDATE maps to animalvaccination.DateRequired,
+NOT DateExpires, and VACCINATIONEXPIRESDATE (a column this script never
+sent) is what maps to DateExpires. At this shelter, DateRequired must
+always equal DateOfVaccination (the shot was given -- there's nothing left
+"required" about it), and DateExpires is the actual next-due date.
+DaySmart's own "due" field (dueDate) is that same next-due-date concept,
+i.e. it corresponds to ASM's DateExpires, not DateRequired. The previous
+version of this script sent DaySmart's dueDate as VACCINATIONDUEDATE,
+which silently wrote it into DateRequired instead (wrong field) while
+never populating DateExpires at all (left blank). Every row this script
+writes now sets VACCINATIONDUEDATE to the given date itself and
+VACCINATIONEXPIRESDATE to DaySmart's dueDate.
+
 ISACTIVE BUG FIX (found during the field-mapping review, 2026-09-04): a
 DaySmart reminder can be superseded/cancelled (isActive: false, with a
 deleteAt timestamp) while a replacement reminder for the same vaccine
@@ -235,7 +249,13 @@ def build_rows(
             "ANIMALNAME": asm_names[code],
             "VACCINATIONTYPE": matched_type,
             "VACCINATIONGIVENDATE": fmt_date_for_asm(given_date),
-            "VACCINATIONDUEDATE": fmt_date_for_asm(r.get("dueDate", "")),
+            # VACCINATIONDUEDATE maps to ASM's DateRequired, which must equal
+            # the given date once the shot has actually been given (see DATE
+            # MAPPING BUG note above) -- NOT DaySmart's own "due" date.
+            "VACCINATIONDUEDATE": fmt_date_for_asm(given_date),
+            # VACCINATIONEXPIRESDATE maps to ASM's DateExpires -- the real
+            # next-due date, which is what DaySmart's dueDate represents.
+            "VACCINATIONEXPIRESDATE": fmt_date_for_asm(r.get("dueDate", "")),
             "VACCINATIONCOMMENTS": r.get("note", ""),
         }
 
