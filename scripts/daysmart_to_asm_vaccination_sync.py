@@ -59,8 +59,8 @@ SETUP: two custom SQL reports must exist in ASM (Reports -> Add report,
 SQL/Advanced type, no criteria) with these exact titles:
 
   "Vaccinations (All Time)"  (ASM_VACCINATION_REPORT_TITLE)
-    SELECT a.ShelterCode AS ShelterCode, a.AnimalName AS AnimalName,
-           vt.VaccinationType AS VaccinationType,
+    SELECT av.ID AS VaccinationID, a.ShelterCode AS ShelterCode,
+           a.AnimalName AS AnimalName, vt.VaccinationType AS VaccinationType,
            av.DateOfVaccination AS DateGiven, av.DateRequired AS DateRequired,
            av.DateExpires AS DateExpires, av.Comments AS Comments
     FROM animalvaccination av
@@ -68,6 +68,9 @@ SQL/Advanced type, no criteria) with these exact titles:
     LEFT OUTER JOIN vaccinationtype vt ON vt.ID = av.VaccinationID
     WHERE av.DateOfVaccination Is Not Null
     ORDER BY a.ShelterCode
+  (VaccinationID added 2026-09-12 for the one-time cleanup of records
+  written before the DATE MAPPING BUG fix above -- this script's own
+  duplicate check doesn't use it.)
 
   "Vaccination Types (All)"  (ASM_VACCINATION_TYPES_REPORT_TITLE)
     SELECT ID, VaccinationType FROM vaccinationtype ORDER BY VaccinationType

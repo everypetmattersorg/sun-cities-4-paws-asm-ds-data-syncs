@@ -103,6 +103,7 @@ titles (the script matches on title):
 duplicate check:
 ```sql
 SELECT
+    av.ID AS VaccinationID,
     a.ShelterCode AS ShelterCode,
     a.AnimalName AS AnimalName,
     vt.VaccinationType AS VaccinationType,
@@ -116,6 +117,10 @@ LEFT OUTER JOIN vaccinationtype vt ON vt.ID = av.VaccinationID
 WHERE av.DateOfVaccination Is Not Null
 ORDER BY a.ShelterCode
 ```
+(`VaccinationID` was added 2026-09-12 so a one-time cleanup script could
+target specific bad records for deletion -- see DATE MAPPING BUG note in
+`daysmart_to_asm_vaccination_sync.py`. The regular sync doesn't use this
+column itself.)
 
 **`Vaccination Types (All)`** -- ASM's real vaccination type names, so the
 sync never has to guess a type name (an earlier version of this project's

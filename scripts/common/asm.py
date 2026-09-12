@@ -198,6 +198,28 @@ def delete_animal(session: requests.Session, animal_id) -> bool:
     return r.status_code == 200 and r.text.strip() in ("", "None", "null")
 
 
+def delete_vaccination(session: requests.Session, vaccination_id) -> bool:
+    """
+    Delete a single animalvaccination record. Confirmed against ASM3's real
+    controller source (src/main.py): the "animal_vaccination" endpoint's
+    post_delete handler calls asm3.medical.delete_vaccination() for each id
+    in the posted "ids" list -- same mode=delete/session-cookie shape as the
+    already-working delete_animal() above, just a different endpoint/param
+    name and one id at a time here (rather than trusting an unverified
+    multi-id list encoding) so each deletion can be checked individually
+    before moving on to the next -- this is a first use of this endpoint in
+    the project, deleting real clinical records, so it's deliberately not
+    batched blind.
+    """
+    r = session.post(
+        f"{ASM_BASE_URL}/animal_vaccination",
+        data={"mode": "delete", "ids": vaccination_id},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    return r.status_code == 200 and r.text.strip() in ("", "None", "null")
+
+
 def post_sync_cleanup(dry_run: bool) -> None:
     """
     After a csv_import run, fetch all shelter animals and delete any that
