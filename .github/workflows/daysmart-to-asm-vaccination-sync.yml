@@ -1,11 +1,15 @@
 name: DaySmart to ASM Vaccination Data Sync
 
+# PAUSED 2026-09-14: schedule trigger removed at the shelter's request while
+# they make updates on their end (related to the ~450 pre-fix records with
+# wrong DateRequired/DateExpires -- see DATE MAPPING BUG note in
+# daysmart_to_asm_vaccination_sync.py). workflow_dispatch (manual, dry run
+# by default) still works. Re-add the schedule block below to resume:
+#   schedule:
+#     - cron: "0 16 * * *"
+#     - cron: "0 0 * * *"
+
 on:
-  schedule:
-    # Arizona does not observe DST (fixed UTC-7 year-round), so 9AM/5PM AZT
-    # is always 16:00/00:00 UTC.
-    - cron: "0 16 * * *"
-    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       live:

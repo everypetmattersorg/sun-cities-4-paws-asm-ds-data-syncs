@@ -12,15 +12,23 @@ DaySmart patient name, e.g. `Biscuit - A2024001`.
 | `daysmart-to-asm-microchip-sync.yml` | DS -> ASM | Microchip number | Skips if ASM's chip already matches |
 | `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM. Two signals feed this: a billed spay/neuter invoice item (real date), or the patient's own DaySmart `sex` field already showing altered (no date, for an animal that arrived already fixed) |
 | `daysmart-to-asm-patient-profile-sync.yml` | DS -> ASM | Date of birth, color, breed | Skips fields ASM already has a matching value for |
-| `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | Given vaccinations | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
+| `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | **PAUSED (2026-09-14)** -- see note below | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
 | `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | **DISABLED (2026-09-11)** -- see note below | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
 | `asm-to-daysmart-create-patients.yml` | ASM -> DS | Creates new DaySmart patients for ASM animals that don't have one yet, named `Name - ASMCODE`, populated with species/sex/breed/color/chip/DOB | Skips any ASM animal already matched in DaySmart by name or code |
 | `asm-to-daysmart-sterilization-sync.yml` | ASM -> DS | Fills in DaySmart's `sex` field from ASM's `SEXNAME`+`NEUTERED`, but **only** for a patient whose DaySmart `sex` is still `Unknown` | DaySmart is the primary source for sterilization status (the clinic updates it directly, far more often) -- this is the fallback direction, only pulling from ASM when DaySmart has nothing of its own to overwrite |
 
-The other six run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
+The other five run on the same schedule: **9:00 AM and 5:00 PM Arizona time**
 (Arizona doesn't observe DST, so that's a fixed `16:00`/`00:00` UTC --
 see the cron lines in each workflow file). Each can also be run manually
 via `workflow_dispatch` from the Actions tab.
+
+**Vaccination sync is currently paused** (its `schedule:` trigger is
+removed, manual `workflow_dispatch` still works) at the shelter's request
+while they make updates on their end related to the ~450 records written
+before the 2026-09-12 date-mapping fix (`VACCINATIONDUEDATE` was being
+written to ASM's `DateRequired` instead of `DateExpires` -- see the DATE
+MAPPING BUG note in `daysmart_to_asm_vaccination_sync.py`). Re-add the
+`schedule:` block in `daysmart-to-asm-vaccination-sync.yml` to resume.
 
 **Medical notes sync is currently disabled** (its `schedule:` trigger is
 removed, manual `workflow_dispatch` still works). A live data check found
