@@ -220,6 +220,60 @@ def delete_vaccination(session: requests.Session, vaccination_id) -> bool:
     return r.status_code == 200 and r.text.strip() in ("", "None", "null")
 
 
+def update_vaccination(session: requests.Session, record: dict, overrides: dict) -> bool:
+    """
+    Full-record update to an EXISTING animalvaccination record via ASM3's
+    /animal_vaccination endpoint's mode=save. Not yet confirmed working --
+    inferred by direct analogy to the "animal" endpoint's already-working
+    mode=save (post_save -> asm3.animal.update_animal_from_form), since
+    ASM3's real source shows update_vaccination_from_form() takes the exact
+    same shape (a "vaccid" to update, one POST field per animalvaccination
+    column) as the confirmed-working delete_vaccination() above's sibling
+    "post_delete" method on the same class.
+
+    update_vaccination_from_form() is a FULL-FIELD overwrite (every column
+    is set from whatever's posted, not just the ones supplied) -- so
+    `record` must be the vaccination's own current full field set (from
+    the "Vaccinations (All Time)" report, expanded 2026-09-17 to include
+    every field this needs) and `overrides` supplies only the field(s)
+    actually changing, e.g. {"expires": "17/09/2026"}. Never call this with
+    a `record` that's missing any of the keys below -- that would silently
+    blank out real data on save (the same trap DaySmart's PUT endpoint had).
+    """
+    payload = {
+        "vaccid": record["vaccination_id"],
+        "animal": record["animal_id"],
+        "type": record["type_id"],
+        "administeringvet": record.get("administering_vet_id") or 0,
+        "by": record.get("given_by") or "",
+        "given": record.get("given") or "",
+        "required": record.get("required") or "",
+        "expires": record.get("expires") or "",
+        "batchnumber": record.get("batch_number") or "",
+        "batchexpiry": record.get("batch_expiry") or "",
+        "manufacturer": record.get("manufacturer") or "",
+        "rabiestag": record.get("rabies_tag") or "",
+        "cost": record.get("cost") or 0,
+        "costpaid": record.get("cost_paid_date") or "",
+        "comments": record.get("comments") or "",
+        **overrides,
+    }
+    r = session.post(
+        f"{ASM_BASE_URL}/animal_vaccination",
+        data={"mode": "save", **payload},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"{ASM_BASE_URL}/main",
+        },
+        timeout=15,
+    )
+    if r.status_code != 200:
+        log.warning("  Failed to update vaccination %s: HTTP %s -- %s", record["vaccination_id"], r.status_code, r.text[:300])
+        return False
+    return True
+
+
 def post_sync_cleanup(dry_run: bool) -> None:
     """
     After a csv_import run, fetch all shelter animals and delete any that

@@ -12,7 +12,7 @@ DaySmart patient name, e.g. `Biscuit - A2024001`.
 | `daysmart-to-asm-microchip-sync.yml` | DS -> ASM | Microchip number | Skips if ASM's chip already matches |
 | `daysmart-to-asm-spay-neuter-sync.yml` | DS -> ASM | Spay/neuter status + date | Skips animals already marked neutered in ASM. Two signals feed this: a billed spay/neuter invoice item (real date), or the patient's own DaySmart `sex` field already showing altered (no date, for an animal that arrived already fixed) |
 | `daysmart-to-asm-patient-profile-sync.yml` | DS -> ASM | Date of birth, color, breed | Skips fields ASM already has a matching value for |
-| `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | **PAUSED (2026-09-14)** -- see note below | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read** |
+| `daysmart-to-asm-vaccination-sync.yml` | DS -> ASM | **PAUSED (2026-09-14)** -- see note below | Reads ASM's existing vaccination records live each run; **refuses to write anything if that check can't be read**. A DaySmart reminder matching an existing ASM record no longer just gets skipped if that record is missing `DateExpires` (every record from before the 2026-09-12 fix) -- it gets enriched with the missing value instead. See MATCH-AND-UPDATE in the script's docstring -- **not yet live-verified**, since ASM's vaccination-update endpoint hasn't been proven working on this account (its sibling delete endpoint has failed with a server error on every attempt so far) |
 | `daysmart-to-asm-medical-notes-sync.yml` | DS -> ASM | **DISABLED (2026-09-11)** -- see note below | Reads ASM's existing medical regimen records live each run; **refuses to write anything if that check can't be read** |
 | `asm-to-daysmart-create-patients.yml` | ASM -> DS | Creates new DaySmart patients for ASM animals that don't have one yet, named `Name - ASMCODE`, populated with species/sex/breed/color/chip/DOB | Skips any ASM animal already matched in DaySmart by name or code |
 | `asm-to-daysmart-sterilization-sync.yml` | ASM -> DS | Fills in DaySmart's `sex` field from ASM's `SEXNAME`+`NEUTERED`, but **only** for a patient whose DaySmart `sex` is still `Unknown` | DaySmart is the primary source for sterilization status (the clinic updates it directly, far more often) -- this is the fallback direction, only pulling from ASM when DaySmart has nothing of its own to overwrite |
@@ -108,16 +108,26 @@ Reports -> Add report -> SQL/Advanced type, no criteria, these **exact**
 titles (the script matches on title):
 
 **`Vaccinations (All Time)`** -- existing vaccination records, for the
-duplicate check:
+duplicate check and the match-and-update path:
 ```sql
 SELECT
     av.ID AS VaccinationID,
+    av.AnimalID AS AnimalID,
+    av.VaccinationID AS VaccinationTypeID,
+    av.AdministeringVetID AS AdministeringVetID,
+    av.GivenBy AS GivenBy,
     a.ShelterCode AS ShelterCode,
     a.AnimalName AS AnimalName,
     vt.VaccinationType AS VaccinationType,
     av.DateOfVaccination AS DateGiven,
     av.DateRequired AS DateRequired,
     av.DateExpires AS DateExpires,
+    av.BatchNumber AS BatchNumber,
+    av.BatchExpiryDate AS BatchExpiryDate,
+    av.Manufacturer AS Manufacturer,
+    av.RabiesTag AS RabiesTag,
+    av.Cost AS Cost,
+    av.CostPaidDate AS CostPaidDate,
     av.Comments AS Comments
 FROM animalvaccination av
 INNER JOIN animal a ON a.ID = av.AnimalID
@@ -127,8 +137,12 @@ ORDER BY a.ShelterCode
 ```
 (`VaccinationID` was added 2026-09-12 so a one-time cleanup script could
 target specific bad records for deletion -- see DATE MAPPING BUG note in
-`daysmart_to_asm_vaccination_sync.py`. The regular sync doesn't use this
-column itself.)
+`daysmart_to_asm_vaccination_sync.py`. Every other new column was added
+2026-09-17 so a matched record can be safely round-tripped through
+`common.asm.update_vaccination()` -- ASM's update endpoint overwrites
+every field, so nothing the sync doesn't intend to change can be left
+out of the payload. The duplicate check itself only uses
+`VaccinationType`/`DateGiven`/`DateExpires`.)
 
 **`Vaccination Types (All)`** -- ASM's real vaccination type names, so the
 sync never has to guess a type name (an earlier version of this project's

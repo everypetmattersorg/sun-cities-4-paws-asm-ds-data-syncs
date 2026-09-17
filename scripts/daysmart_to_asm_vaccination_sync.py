@@ -59,18 +59,44 @@ SETUP: two custom SQL reports must exist in ASM (Reports -> Add report,
 SQL/Advanced type, no criteria) with these exact titles:
 
   "Vaccinations (All Time)"  (ASM_VACCINATION_REPORT_TITLE)
-    SELECT av.ID AS VaccinationID, a.ShelterCode AS ShelterCode,
-           a.AnimalName AS AnimalName, vt.VaccinationType AS VaccinationType,
+    SELECT av.ID AS VaccinationID, av.AnimalID AS AnimalID,
+           av.VaccinationID AS VaccinationTypeID,
+           av.AdministeringVetID AS AdministeringVetID, av.GivenBy AS GivenBy,
+           a.ShelterCode AS ShelterCode, a.AnimalName AS AnimalName,
+           vt.VaccinationType AS VaccinationType,
            av.DateOfVaccination AS DateGiven, av.DateRequired AS DateRequired,
-           av.DateExpires AS DateExpires, av.Comments AS Comments
+           av.DateExpires AS DateExpires, av.BatchNumber AS BatchNumber,
+           av.BatchExpiryDate AS BatchExpiryDate, av.Manufacturer AS Manufacturer,
+           av.RabiesTag AS RabiesTag, av.Cost AS Cost,
+           av.CostPaidDate AS CostPaidDate, av.Comments AS Comments
     FROM animalvaccination av
     INNER JOIN animal a ON a.ID = av.AnimalID
     LEFT OUTER JOIN vaccinationtype vt ON vt.ID = av.VaccinationID
     WHERE av.DateOfVaccination Is Not Null
     ORDER BY a.ShelterCode
   (VaccinationID added 2026-09-12 for the one-time cleanup of records
-  written before the DATE MAPPING BUG fix above -- this script's own
-  duplicate check doesn't use it.)
+  written before the DATE MAPPING BUG fix above. Every other new column
+  added 2026-09-17 so a MATCH-AND-UPDATE (see below) can safely
+  round-trip a record through common.asm.update_vaccination() without
+  blanking fields it doesn't touch -- ASM3's update endpoint is a
+  full-record overwrite, not a partial patch. This script's own
+  duplicate check only uses VaccinationType/DateGiven/DateExpires.)
+
+MATCH-AND-UPDATE (added 2026-09-17): previously, a DaySmart reminder that
+matched an existing ASM record (same type, given date within 1 day) was
+always just skipped, even if that ASM record was missing information
+DaySmart has -- most notably DateExpires, which every record written
+before the 2026-09-12 fix has blank. Now, a match whose ASM DateExpires
+is blank gets enriched via update_vaccination() instead of skipped outright,
+filling in DateExpires from DaySmart's dueDate. Nothing else about a
+matched record is touched. NOT YET LIVE-VERIFIED: ASM's vaccination-delete
+endpoint on this account has failed with a server error on every attempt
+regardless of permissions or record; the update endpoint (same
+"animal_vaccination" class, different mode) is inferred correct by
+analogy to the confirmed-working "animal" endpoint's mode=save, but
+carries the same risk of hitting whatever is wrong with this endpoint on
+this ASM instance. Test on one real record and verify before trusting it
+at scale.
 
   "Vaccination Types (All)"  (ASM_VACCINATION_TYPES_REPORT_TITLE)
     SELECT ID, VaccinationType FROM vaccinationtype ORDER BY VaccinationType
@@ -180,7 +206,12 @@ def load_asm_vaccination_types() -> dict[str, str] | None:
 
 
 def load_asm_existing_vaccinations() -> dict[str, list[dict]] | None:
-    """SHELTERCODE -> list of {type, given, due, ...} already recorded in ASM."""
+    """
+    SHELTERCODE -> list of existing ASM vaccination records, each carrying
+    every field common.asm.update_vaccination() needs to safely round-trip
+    the record (see MATCH-AND-UPDATE in the module docstring) alongside the
+    type/given/expires fields the duplicate check itself uses.
+    """
     raw = asm.get_report(ASM_VACCINATION_REPORT_TITLE)
     if raw is None:
         return None
@@ -190,21 +221,34 @@ def load_asm_existing_vaccinations() -> dict[str, list[dict]] | None:
         if not code:
             continue
         by_code.setdefault(code, []).append({
+            "vaccination_id": _ci_get(row, "VaccinationID"),
+            "animal_id": _ci_get(row, "AnimalID"),
+            "type_id": _ci_get(row, "VaccinationTypeID"),
+            "administering_vet_id": _ci_get(row, "AdministeringVetID"),
+            "given_by": _ci_get(row, "GivenBy"),
             "type": (_ci_get(row, "VaccinationType") or "").strip(),
             "given": _ci_get(row, "DateGiven"),
-            "due": _ci_get(row, "DateRequired"),
+            "required": _ci_get(row, "DateRequired"),
+            "expires": _ci_get(row, "DateExpires"),
+            "batch_number": _ci_get(row, "BatchNumber"),
+            "batch_expiry": _ci_get(row, "BatchExpiryDate"),
+            "manufacturer": _ci_get(row, "Manufacturer"),
+            "rabies_tag": _ci_get(row, "RabiesTag"),
+            "cost": _ci_get(row, "Cost"),
+            "cost_paid_date": _ci_get(row, "CostPaidDate"),
+            "comments": _ci_get(row, "Comments"),
         })
     log.info("ASM: existing vaccination records loaded for %d animal(s).", len(by_code))
     return by_code
 
 
-def already_in_asm(existing: list[dict], vax_type: str, given_date: str) -> bool:
+def find_matching_asm_record(existing: list[dict], vax_type: str, given_date: str) -> dict | None:
     for rec in existing:
         if rec["type"].strip().lower() != vax_type.strip().lower():
             continue
         if dates_close(rec.get("given"), given_date, GIVEN_DATE_TOLERANCE_DAYS):
-            return True
-    return False
+            return rec
+    return None
 
 
 def build_rows(
@@ -213,12 +257,12 @@ def build_rows(
     asm_names: dict[str, str],
     asm_existing_vax: dict[str, list[dict]],
     asm_vax_types: dict[str, str],
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """Returns (rows_to_write, skipped_duplicates, skipped_no_type_match)."""
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Returns (rows_to_insert, rows_to_enrich, skipped_duplicates, skipped_no_type_match)."""
     patients_by_id = {p["id"]: p for p in patients}
     raw = daysmart.paginate(token, "reminders")
 
-    rows, skipped_dup, skipped_no_match = [], [], []
+    rows, enrich, skipped_dup, skipped_no_match = [], [], [], []
 
     for r in raw:
         item = r.get("item") or {}
@@ -262,15 +306,32 @@ def build_rows(
             "VACCINATIONCOMMENTS": r.get("note", ""),
         }
 
-        if already_in_asm(asm_existing_vax.get(code, []), matched_type, given_date):
-            skipped_dup.append(row)
+        matched = find_matching_asm_record(asm_existing_vax.get(code, []), matched_type, given_date)
+        if matched:
+            # See MATCH-AND-UPDATE in the module docstring: a match missing
+            # DateExpires (every record from before the 2026-09-12 fix) gets
+            # enriched instead of silently skipped. Anything else about an
+            # already-matched record is left alone.
+            ds_due = r.get("dueDate", "")
+            if not str(matched.get("expires") or "").strip() and ds_due:
+                enrich.append({
+                    "record": matched,
+                    "new_expires": fmt_date_for_asm(ds_due),
+                    "ANIMALCODE": code, "ANIMALNAME": asm_names[code],
+                    "VACCINATIONTYPE": matched_type,
+                    "GivenDate": fmt_date_for_asm(given_date),
+                    "NewDateExpires": fmt_date_for_asm(ds_due),
+                })
+            else:
+                skipped_dup.append(row)
             continue
 
         rows.append(row)
 
     log.info(
-        "Vaccination rows to write: %d (skipped %d already in ASM, %d with no confident type match)",
-        len(rows), len(skipped_dup), len(skipped_no_match),
+        "Vaccination rows to write: %d (skipped %d already in ASM, %d to enrich with a missing DateExpires, "
+        "%d with no confident type match)",
+        len(rows), len(skipped_dup), len(enrich), len(skipped_no_match),
     )
     if skipped_no_match:
         log.warning(
@@ -278,7 +339,7 @@ def build_rows(
             "vaccinationtype table, or fix the DaySmart inventory item label, then re-run): %s",
             sorted({s["DaySmartLabel"] for s in skipped_no_match}),
         )
-    return rows, skipped_dup, skipped_no_match
+    return rows, enrich, skipped_dup, skipped_no_match
 
 
 def main():
@@ -307,7 +368,9 @@ def main():
         log.info("=== %s aborted at %s ===", FLOW_NAME, datetime.now(timezone.utc).isoformat())
         return
 
-    rows, skipped_dup, skipped_no_match = build_rows(token, patients, asm_names, asm_existing_vax, asm_vax_types)
+    rows, enrich, skipped_dup, skipped_no_match = build_rows(
+        token, patients, asm_names, asm_existing_vax, asm_vax_types
+    )
 
     if skipped_dup:
         log.info("Skipped -- already in ASM (%d):\n%s", len(skipped_dup), _rows_to_csv(skipped_dup))
@@ -316,12 +379,30 @@ def main():
     if args.live:
         asm.post_sync_cleanup(dry_run=False)
 
+    enriched, enrich_failed = [], 0
+    if enrich:
+        report_rows = [{k: v for k, v in u.items() if k != "record"} for u in enrich]
+        if not args.live:
+            log.info(
+                "[DRY RUN] Would enrich %d existing ASM record(s) with a missing DateExpires:\n%s",
+                len(enrich), _rows_to_csv(report_rows),
+            )
+            enriched = report_rows
+        else:
+            session = asm.login()
+            for u in enrich:
+                if asm.update_vaccination(session, u["record"], {"expires": u["new_expires"]}):
+                    enriched.append({k: v for k, v in u.items() if k != "record"})
+                else:
+                    enrich_failed += 1
+            log.info("Enriched %d / %d existing ASM record(s) with a missing DateExpires.", len(enriched), len(enrich))
+
     send_sync_report(
         FLOW_NAME,
         rows if ok else [],
         REPORT_TO,
         dry_run=not args.live,
-        send_failed=not ok,
+        send_failed=not ok or enrich_failed > 0,
         skipped_duplicates=skipped_dup + skipped_no_match,
     )
 
